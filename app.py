@@ -178,58 +178,128 @@ if mode == "Patient":
                 st.error(f"Prediction failed: {e}")
 
 # ----------- DOCTOR MODE -----------
-else:
-    st.header("Doctor Mode — CT scan upload (image analysis not integrated)")
-    st.write("Doctor mode currently accepts CT scans (or images) for later processing. Click 'Run Image Analysis' to get the local file path; analysis is not integrated yet.")
+# ---------- DOCTOR MODE (CSV-based login) ----------
+import pandas as pd
 
-    uploaded_file = st.file_uploader("Upload CT scan image (DICOM/JPEG/PNG)", type=["png", "jpg", "jpeg", "dcm"])
+DOCTORS_CSV_PATH = Path("doctors.csv")  # expected CSV at repo root
+DEV_DATASET_IMAGE_PATH = "/mnt/data/7fff4457-81ee-4946-abe9-827fd7ca287b.png"
 
-    # Two columns: left shows uploaded preview / temp path; right shows dataset preview and its local path
-    col1, col2 = st.columns(2)
-    with col1:
-        st.subheader("Uploaded image")
-        if uploaded_file is not None:
-            st.success("File uploaded.")
-            try:
-                suffix = Path(uploaded_file.name).suffix or ".img"
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-                tmp.write(uploaded_file.getbuffer())
-                tmp.flush()
-                tmp_path = tmp.name
-                tmp.close()
-                st.write("Temporary local file path (use this for integration):")
-                st.code(tmp_path)
-                # Preview if readable by PIL
-                try:
-                    im = Image.open(tmp_path)
-                    st.image(im, caption="Uploaded image preview", use_column_width=True)
-                except Exception:
-                    st.info("Preview not available (file may be DICOM or unsupported).")
-            except Exception as e:
-                st.error(f"Failed to save uploaded file: {e}")
+def load_doctors_from_csv(path: Path):
+    """Return dict {doctor_id: password} or (None, err)"""
+    if not path.exists():
+        return None, f"doctors CSV not found at {path.resolve()}"
+    try:
+        df = pd.read_csv(path)
+        # Expecting columns 'doctor_id' and 'password'
+        if "doctor_id" not in df.columns or "password" not in df.columns:
+            return None, "CSV must contain 'doctor_id' and 'password' columns"
+        return dict(zip(df["doctor_id"].astype(str), df["password"].astype(str))), None
+    except Exception as e:
+        return None, str(e)
+
+# Initialize session state for doctor login
+if "doctor_logged_in" not in st.session_state:
+    st.session_state["doctor_logged_in"] = False
+if "doctor_id" not in st.session_state:
+    st.session_state["doctor_id"] = None
+if "doctors_dict" not in st.session_state:
+    st.session_state["doctors_dict"] = None  # will hold loaded credentials
+
+st.header("Doctor Mode — login required")
+
+# If CSV exists, attempt to load it into session_state (so we don't re-read every render)
+if st.session_state["doctors_dict"] is None:
+    if DOCTORS_CSV_PATH.exists():
+        docs, err = load_doctors_from_csv(DOCTORS_CSV_PATH)
+        if docs is None:
+            st.error(f"Failed to load doctors.csv: {err}")
+            st.info("You can upload a replacement CSV below.")
         else:
-            st.info("No file uploaded. Use the dataset preview on the right as example.")
+            st.session_state["doctors_dict"] = docs
+    else:
+        st.info("No doctors.csv found in repository. You can upload a doctors CSV now to enable login.")
 
-    with col2:
-        st.subheader("Dataset preview (developer-provided)")
+# Allow uploading a doctors CSV (to create or replace doctors.csv)
+with st.expander("Upload / Replace doctors.csv (CSV columns: doctor_id,password)", expanded=False):
+    uploaded_docs = st.file_uploader("Upload doctors.csv", type=["csv"], key="doctors_csv_upload")
+    if uploaded_docs is not None:
         try:
-            img = Image.open(DATASET_IMAGE_LOCAL_PATH)
-            st.image(img, caption="Dataset preview image", use_column_width=True)
-            st.write("Developer local dataset image path (use as file URL for integration):")
-            st.code(DATASET_IMAGE_LOCAL_PATH)
-        except Exception:
-            st.warning("Dataset preview image not available at expected path.")
+            df_new = pd.read_csv(uploaded_docs)
+            if "doctor_id" not in df_new.columns or "password" not in df_new.columns:
+                st.error("CSV must contain 'doctor_id' and 'password' columns.")
+            else:
+                # Save to repo root (works in local/dev). On Streamlit Cloud, this will persist per deploy.
+                df_new.to_csv(DOCTORS_CSV_PATH, index=False)
+                st.success(f"Saved doctors.csv to {DOCTORS_CSV_PATH.resolve()}. Reloading credentials...")
+                docs, err = load_doctors_from_csv(DOCTORS_CSV_PATH)
+                if docs is not None:
+                    st.session_state["doctors_dict"] = docs
+                else:
+                    st.error(f"Failed to load uploaded CSV: {err}")
+        except Exception as e:
+            st.error(f"Failed to read uploaded CSV: {e}")
 
-    st.markdown("---")
-    if st.button("Run Image Analysis (Doctor)"):
-        st.info("Image analysis is not integrated yet.")
-        if uploaded_file is not None and 'tmp_path' in locals():
-            st.write("Uploaded file local path (use for integration):")
-            st.code(tmp_path)
+# If not logged in, show login form
+if not st.session_state["doctor_logged_in"]:
+    with st.form("doctor_login_form"):
+        doc_id = st.text_input("Doctor ID")
+        doc_pw = st.text_input("Password", type="password")
+        login_btn = st.form_submit_button("Login")
+
+    if login_btn:
+        if st.session_state["doctors_dict"] is None:
+            st.error("No credentials available. Upload a doctors.csv or add credentials to doctors.csv in repo root.")
         else:
-            st.write("No CT upload detected. Use the developer-provided dataset image path:")
-            st.code(DATASET_IMAGE_LOCAL_PATH)
-        st.warning("Image analysis functionality will be added later. No model prediction is performed here.")
+            # validate
+            creds = st.session_state["doctors_dict"]
+            if doc_id in creds and creds[doc_id] == doc_pw:
+                st.session_state["doctor_logged_in"] = True
+                st.session_state["doctor_id"] = doc_id
+                st.success(f"Logged in as {doc_id}")
+                st.experimental_rerun()
+            else:
+                st.error("Invalid Doctor ID or password.")
 
-st.markdown("---")
-st.caption("Notes: Place 'lung_cancer_model.pkl' in the same directory as app.py. FEATURE_ORDER must exactly match the order used when training the model. If training involved scaling/encoders, load and apply identical preprocessing before calling .predict().")
+# If logged in, show doctor dashboard (CT upload area + dataset preview)
+else:
+    st.markdown(f"**Logged in as:** `{st.session_state['doctor_id']}`")
+    if st.button("Logout"):
+        st.session_state["doctor_logged_in"] = False
+        st.session_state["doctor_id"] = None
+        st.experimental_rerun()
+
+    st.subheader("CT scan upload (image analysis not integrated yet)")
+    uploaded_file = st.file_uploader("Upload CT scan image (DICOM/JPEG/PNG)", type=["png", "jpg", "jpeg", "dcm"], key="doctor_ct_upload")
+
+    # show upload preview and save temp file if provided
+    if uploaded_file is not None:
+        st.success("File uploaded.")
+        try:
+            suffix = Path(uploaded_file.name).suffix or ".img"
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+            tmp.write(uploaded_file.getbuffer())
+            tmp.flush()
+            tmp_path = tmp.name
+            tmp.close()
+            st.write("Temporary local file path (use this for integration):")
+            st.code(tmp_path)
+            try:
+                img = Image.open(tmp_path)
+                st.image(img, caption="Uploaded CT preview", use_column_width=True)
+            except Exception:
+                st.info("Preview not available (possibly DICOM).")
+        except Exception as e:
+            st.error(f"Failed to save uploaded file: {e}")
+    else:
+        st.info("No CT uploaded yet. You can upload or use the dataset preview below.")
+
+    st.markdown("### Dataset preview (developer-provided)")
+    try:
+        img = Image.open(DEV_DATASET_IMAGE_PATH)
+        st.image(img, caption="Dataset preview", use_column_width=True)
+    except Exception:
+        st.warning("Dataset preview image not available at expected path.")
+
+    st.write("File URL to use for integration (developer-provided):")
+    st.code(DEV_DATASET_IMAGE_PATH)
+    st.info("Image analysis is not integrated yet. When ready, call your image-analysis endpoint with the uploaded file path or this dataset path.")
