@@ -304,12 +304,23 @@ def preprocess_image_for_model(image_path: str, model_input_shape):
     return batch
 
 # ---------------- UI & Logic ----------------
-st.header("Doctor Mode — CT analysis (Dropbox-hosted model)")
 
-st.info("Paste your Dropbox share link (or leave default). Upload a CT image and click 'Run Image Analysis' to get prediction. Image analysis uses the provided .h5 model downloaded from Dropbox.")
+# ---------------- CLEANED DOCTOR MODE UI (no blue heading, no Dropbox link box) ----------------
+
+# Your Dropbox model URL stored internally (not shown to users)
+MODEL_URL = "https://www.dropbox.com/scl/fi/bab21h5uesf59j2yn9ngu/lung_cancer_model_finalmodel.h5?rlkey=uw8n849or6sfcolvevbjngahh&st=cp4zn6qy&dl=0"
+
+# Convert to direct-download
+direct_model_url = dropbox_to_direct(MODEL_URL)
+
+st.header("Doctor Mode — CT Analysis")
+st.write("Upload a CT image and click **Run Image Analysis** to get a prediction.")
+st.write("Image processing & model inference will be performed using the internal model.")
+
+#st.info("Paste your Dropbox share link (or leave default). Upload a CT image and click 'Run Image Analysis' to get prediction. Image analysis uses the provided .h5 model downloaded from Dropbox.")
 
 # Input: model URL (pre-filled with the Dropbox link you provided)
-model_url_input = st.text_input("Model URL (Dropbox share link)", value=DEFAULT_DROPBOX_URL)
+#model_url_input = st.text_input("Model URL (Dropbox share link)", value=DEFAULT_DROPBOX_URL)
 
 # Upload CT scan (doctor)
 uploaded_file = st.file_uploader("Upload CT scan image (DICOM/JPEG/PNG). If DICOM, upload as .dcm", type=["png", "jpg", "jpeg", "dcm"])
