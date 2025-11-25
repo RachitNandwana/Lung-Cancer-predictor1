@@ -38,7 +38,7 @@ FEATURE_ORDER = [
     "Anxiety + yellow fingers",
 ]
 
-st.caption("Ensure FEATURE_ORDER matches the model's training order and preprocessing.")
+#st.caption("Ensure FEATURE_ORDER matches the model's training order and preprocessing.")
 
 # ---------- helpers ----------
 def binary_input(label, key, default=0):
@@ -68,46 +68,92 @@ def show_prediction_only_and_warning(model, x):
         st.error(f"Prediction failed: {e}")
 
 # ---------- Patient Mode ----------
-# ---------- Patient Mode ----------
+# ---------- Patient Mode (tag-style multiselect UI) ----------
 if mode == "Patient":
     st.header("Patient Mode")
 
+    st.markdown("Select symptoms (selected = **Yes / 1**, unselected = **No / 0**)")
+
+    # Human-friendly label -> feature key used by the model
+    FEATURE_LABEL_MAP = {
+        "Smoking": "SMOKING",
+        "Yellow fingers": "YELLOW_FINGERS",
+        "Anxiety": "ANXIETY",
+        "Peer pressure": "PEER_PRESSURE",
+        "Chronic disease": "CHRONIC_DISEASE",
+        "Fatigue": "FATIGUE",
+        "Allergy": "ALLERGY",
+        "Wheezing": "WHEEZING",
+        "Alcohol consuming": "ALCOHOL_CONSUMING",
+        "Coughing": "COUGHING",
+        "Shortness of breath": "SHORTNESS_OF_BREATH",
+        "Swallowing difficulty": "SWALLOWING_DIFFICULTY",
+        "Chest pain": "CHEST_PAIN",
+    }
+
+    # Optional: group labels into expanders (match to layout you like)
+    GROUPS = {
+        "Behavior & Exposures": [
+            "Smoking", "Alcohol consuming", "Peer pressure", "Yellow fingers"
+        ],
+        "Comorbidities / General": [
+            "Chronic disease", "Fatigue", "Allergy"
+        ],
+        "Respiratory / ENT": [
+            "Wheezing", "Coughing", "Shortness of breath", "Swallowing difficulty", "Chest pain"
+        ],
+        "Psych / Other": [
+            "Anxiety"
+        ],
+    }
+
+    # Build selected set using expanders for nicer layout
+    selected_labels = []
     with st.form("patient_form"):
-        st.subheader("Enter your symptoms")
-
-        def yn(label, key):
-            return 1 if st.radio(label, ["No", "Yes"], horizontal=True, key=key) == "Yes" else 0
-
-        inputs = {}
-        inputs["SMOKING"] = yn("Smoking", "p_smoking")
-        inputs["YELLOW_FINGERS"] = yn("Yellow Fingers", "p_yellow")
-        inputs["ANXIETY"] = yn("Anxiety", "p_anxiety")
-        inputs["PEER_PRESSURE"] = yn("Peer Pressure", "p_peer")
-        inputs["CHRONIC_DISEASE"] = yn("Chronic Disease", "p_chronic")
-        inputs["FATIGUE"] = yn("Fatigue", "p_fatigue")
-        inputs["ALLERGY"] = yn("Allergy", "p_allergy")
-        inputs["WHEEZING"] = yn("Wheezing", "p_wheezing")
-        inputs["ALCOHOL_CONSUMING"] = yn("Alcohol Consumption", "p_alcohol")
-        inputs["COUGHING"] = yn("Coughing", "p_coughing")
-        inputs["SHORTNESS_OF_BREATH"] = yn("Shortness of Breath", "p_shortness")
-        inputs["SWALLOWING_DIFFICULTY"] = yn("Swallowing Difficulty", "p_swallow")
-        inputs["CHEST_PAIN"] = yn("Chest Pain", "p_chest")
+        cols = st.columns(len(GROUPS)) if len(GROUPS) <= 3 else st.columns(2)
+        # show expanders (two-column layout-ish; adjust as desired)
+        for i, (group_name, labels) in enumerate(GROUPS.items()):
+            # choose column to put it in (cycling)
+            col = cols[i % len(cols)]
+            with col.expander(group_name, expanded=False):
+                # show multiselect for this group. We use multiselect so selected items appear as chips.
+                chosen = col.multiselect(
+                    label=f"Select {group_name}",
+                    options=labels,
+                    default=[]
+                )
+                # accumulate selections
+                for ch in chosen:
+                    if ch not in selected_labels:
+                        selected_labels.append(ch)
 
         submitted = st.form_submit_button("Predict")
 
     if submitted:
-        # Auto compute derived column
-        inputs["Anxiety + yellow fingers"] = 1 if (
-            inputs["ANXIETY"] == 1 or inputs["YELLOW_FINGERS"] == 1
-        ) else 0
+        # Build inputs dict for model features (0/1)
+        inputs = {}
+        for human_label, feat_key in FEATURE_LABEL_MAP.items():
+            inputs[feat_key] = 1 if human_label in selected_labels else 0
 
-        x = np.array([inputs[f] for f in FEATURE_ORDER], dtype=float).reshape(1, -1)
+        # Compute derived feature: Anxiety + yellow fingers (logical OR)
+        # If you trained with a different rule, change this line.
+        anx_val = inputs.get("ANXIETY", 0)
+        yellow_val = inputs.get("YELLOW_FINGERS", 0)
+        inputs["Anxiety + yellow fingers"] = 1 if (anx_val == 1 or yellow_val == 1) else 0
+
+        # Ensure feature order matches the model
+        try:
+            x = np.array([inputs[f] for f in FEATURE_ORDER], dtype=float).reshape(1, -1)
+        except KeyError as e:
+            st.error(f"Feature mismatch: missing {e}. Check FEATURE_ORDER vs provided inputs.")
+            st.stop()
 
         model, err = load_local_model(LOCAL_MODEL_PATH)
         if model is None:
             st.error(f"Model load failed: {err}")
         else:
             show_prediction_only_and_warning(model, x)
+
 
 # ---------- Doctor Mode ----------
 else:
