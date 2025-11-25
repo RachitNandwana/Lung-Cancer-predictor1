@@ -68,35 +68,40 @@ def show_prediction_only_and_warning(model, x):
         st.error(f"Prediction failed: {e}")
 
 # ---------- Patient Mode ----------
+# ---------- Patient Mode ----------
 if mode == "Patient":
-    st.header("Patient mode — enter symptoms (LUNG_CANCER NOT provided as input)")
-    st.info("We compute the combined feature 'Anxiety + yellow fingers' automatically.")
+    st.header("Patient Mode")
 
     with st.form("patient_form"):
-        inputs = {}
-        inputs["SMOKING"] = binary_input("SMOKING (0/1)", "p_smoking", 0)
-        inputs["YELLOW_FINGERS"] = binary_input("YELLOW_FINGERS (0/1)", "p_yellow", 0)
-        inputs["ANXIETY"] = binary_input("ANXIETY (0/1)", "p_anxiety", 0)
-        inputs["PEER_PRESSURE"] = binary_input("PEER_PRESSURE (0/1)", "p_peer", 0)
-        inputs["CHRONIC_DISEASE"] = binary_input("CHRONIC_DISEASE (0/1)", "p_chronic", 0)
-        inputs["FATIGUE"] = binary_input("FATIGUE (0/1)", "p_fatigue", 0)
-        inputs["ALLERGY"] = binary_input("ALLERGY (0/1)", "p_allergy", 0)
-        inputs["WHEEZING"] = binary_input("WHEEZING (0/1)", "p_wheezing", 0)
-        inputs["ALCOHOL_CONSUMING"] = binary_input("ALCOHOL_CONSUMING (0/1)", "p_alcohol", 0)
-        inputs["COUGHING"] = binary_input("COUGHING (0/1)", "p_coughing", 0)
-        inputs["SHORTNESS_OF_BREATH"] = binary_input("SHORTNESS_OF_BREATH (0/1)", "p_shortness", 0)
-        inputs["SWALLOWING_DIFFICULTY"] = binary_input("SWALLOWING_DIFFICULTY (0/1)", "p_swallow", 0)
-        inputs["CHEST_PAIN"] = binary_input("CHEST_PAIN (0/1)", "p_chest", 0)
+        st.subheader("Enter your symptoms")
 
-        submitted = st.form_submit_button("Predict (Patient)")
+        def yn(label, key):
+            return 1 if st.radio(label, ["No", "Yes"], horizontal=True, key=key) == "Yes" else 0
+
+        inputs = {}
+        inputs["SMOKING"] = yn("Smoking", "p_smoking")
+        inputs["YELLOW_FINGERS"] = yn("Yellow Fingers", "p_yellow")
+        inputs["ANXIETY"] = yn("Anxiety", "p_anxiety")
+        inputs["PEER_PRESSURE"] = yn("Peer Pressure", "p_peer")
+        inputs["CHRONIC_DISEASE"] = yn("Chronic Disease", "p_chronic")
+        inputs["FATIGUE"] = yn("Fatigue", "p_fatigue")
+        inputs["ALLERGY"] = yn("Allergy", "p_allergy")
+        inputs["WHEEZING"] = yn("Wheezing", "p_wheezing")
+        inputs["ALCOHOL_CONSUMING"] = yn("Alcohol Consumption", "p_alcohol")
+        inputs["COUGHING"] = yn("Coughing", "p_coughing")
+        inputs["SHORTNESS_OF_BREATH"] = yn("Shortness of Breath", "p_shortness")
+        inputs["SWALLOWING_DIFFICULTY"] = yn("Swallowing Difficulty", "p_swallow")
+        inputs["CHEST_PAIN"] = yn("Chest Pain", "p_chest")
+
+        submitted = st.form_submit_button("Predict")
 
     if submitted:
-        inputs["Anxiety + yellow fingers"] = compute_derived(inputs["ANXIETY"], inputs["YELLOW_FINGERS"])
-        try:
-            x = np.array([inputs[f] for f in FEATURE_ORDER], dtype=float).reshape(1, -1)
-        except KeyError as e:
-            st.error(f"Feature mismatch: missing {e}. Check FEATURE_ORDER vs provided inputs.")
-            st.stop()
+        # Auto compute derived column
+        inputs["Anxiety + yellow fingers"] = 1 if (
+            inputs["ANXIETY"] == 1 or inputs["YELLOW_FINGERS"] == 1
+        ) else 0
+
+        x = np.array([inputs[f] for f in FEATURE_ORDER], dtype=float).reshape(1, -1)
 
         model, err = load_local_model(LOCAL_MODEL_PATH)
         if model is None:
