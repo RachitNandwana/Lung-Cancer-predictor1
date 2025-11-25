@@ -93,12 +93,11 @@ st.sidebar.header("Mode")
 mode = st.sidebar.radio("", ["Patient", "Doctor"])
 
 # ----------- PATIENT MODE -----------
+# ---------- Patient Mode (clean headings, only symptom chips selectable) ----------
 if mode == "Patient":
-    # Clean header (no extra caption lines)
     st.header("Patient Mode")
-    st.write("Select symptoms you have. Selected items = **Yes / 1**; unselected = **No / 0**.")
+    st.write("Select symptoms you have. Selected = 1 (Yes), Unselected = 0 (No).")
 
-    # Friendly label -> feature key map (only symptom labels are selectable)
     FEATURE_LABEL_MAP = {
         "Smoking": "SMOKING",
         "Yellow fingers": "YELLOW_FINGERS",
@@ -115,7 +114,6 @@ if mode == "Patient":
         "Chest pain": "CHEST_PAIN",
     }
 
-    # Grouping for nicer layout (group titles are not selectable)
     GROUPS = {
         "Behavior & Exposures": [
             "Smoking", "Alcohol consuming", "Peer pressure", "Yellow fingers"
@@ -134,38 +132,41 @@ if mode == "Patient":
     with st.form("patient_form"):
         selected_labels = []
 
-        # Two-column layout for compactness
+        # Two-column layout WITHOUT dropdowns/expanders
         cols = st.columns(2)
         for i, (group_name, labels) in enumerate(GROUPS.items()):
-            col = cols[i % len(cols)]
-            # Use expander for visual grouping; only actual symptom labels appear in the multiselect
-            with col.expander(group_name, expanded=False):
-                chosen = col.multiselect(label=f"Select {group_name}", options=labels, default=[])
-                for ch in chosen:
-                    if ch not in selected_labels:
-                        selected_labels.append(ch)
+            col = cols[i % 2]
+
+            # Just a title — not clickable
+            col.markdown(f"### {group_name}")
+
+            # Only the symptom chips are selectable
+            chosen = col.multiselect(
+                label="",  # no label so only chips show
+                options=labels,
+                default=[]
+            )
+
+            for ch in chosen:
+                if ch not in selected_labels:
+                    selected_labels.append(ch)
 
         submitted = st.form_submit_button("Predict")
 
     if submitted:
-        # Build binary input dictionary expected by model
+        # Convert selections to 0/1 inputs
         inputs = {}
-        for human_label, feat_key in FEATURE_LABEL_MAP.items():
-            inputs[feat_key] = 1 if human_label in selected_labels else 0
+        for label, key in FEATURE_LABEL_MAP.items():
+            inputs[key] = 1 if label in selected_labels else 0
 
-        # Derived column: Anxiety + yellow fingers (logical OR)
-        anx_val = inputs.get("ANXIETY", 0)
-        yellow_val = inputs.get("YELLOW_FINGERS", 0)
-        inputs["Anxiety + yellow fingers"] = 1 if (anx_val == 1 or yellow_val == 1) else 0
+        # Derived column
+        inputs["Anxiety + yellow fingers"] = 1 if (
+            inputs["ANXIETY"] == 1 or inputs["YELLOW_FINGERS"] == 1
+        ) else 0
 
-        # Create model input array in the correct order
-        try:
-            x = np.array([inputs[f] for f in FEATURE_ORDER], dtype=float).reshape(1, -1)
-        except KeyError as e:
-            st.error(f"Feature mismatch: missing {e}. Check FEATURE_ORDER vs provided inputs.")
-            st.stop()
+        # Build feature vector
+        x = np.array([inputs[f] for f in FEATURE_ORDER], dtype=float).reshape(1, -1)
 
-        # Load model and predict
         model, err = load_local_model(LOCAL_MODEL_PATH)
         if model is None:
             st.error(f"Model load failed: {err}")
