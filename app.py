@@ -61,13 +61,13 @@ def interpret_and_show_prediction(pred):
         if pred_value >= 0.5:
             st.markdown(
                 f"<div style='padding:10px;border-radius:8px;background:#3b0b0b;color:#fff'>"
-                f"<strong>High chance of lung cancer</strong> — estimated probability: <strong>{pct:.1f}%</strong>.</div>",
+                f"<strong>High chance of lung cancer</strong>.</div>",
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
                 f"<div style='padding:10px;border-radius:8px;background:#083a1f;color:#fff'>"
-                f"<strong>Low chance of lung cancer</strong> — estimated probability: <strong>{pct:.1f}%</strong>.</div>",
+                f"<strong>Low chance of lung cancer</strong>.</div>",
                 unsafe_allow_html=True,
             )
     else:
