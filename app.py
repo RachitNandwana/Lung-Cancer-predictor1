@@ -1,51 +1,26 @@
 # app.py
 import streamlit as st
 import numpy as np
-import pandas as pd
-import requests
 import joblib
-from io import BytesIO
+from pathlib import Path
 from PIL import Image
-
-# Path to the uploaded image (from your conversation history / dev message)
-DATASET_IMAGE_PATH = "/mnt/data/7fff4457-81ee-4946-abe9-827fd7ca287b.png"
+import tempfile
 
 st.set_page_config(page_title="Lung Cancer Predictor", layout="wide")
-
 st.title("Lung Cancer Prediction — Doctor / Patient Modes")
+
+# Developer-provided dataset image local path (use as "URL" for integration step)
+DATASET_IMAGE_LOCAL_PATH = "/mnt/data/7fff4457-81ee-4946-abe9-827fd7ca287b.png"
+
+# Local model filename expected in same repo as app.py
+LOCAL_MODEL_PATH = Path("lung_cancer_model.pkl")
 
 st.sidebar.header("Mode selection")
 mode = st.sidebar.radio("Choose mode", ["Patient", "Doctor"])
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("Model source (GitHub raw URL):")
-GITHUB_RAW_URL = st.sidebar.text_input(
-    "Enter raw URL to .pkl model file",
-    value="", # put your raw GitHub URL here, e.g. https://raw.githubusercontent.com/username/repo/branch/path/model.pkl
-)
+st.markdown("---")
 
-# Helper to load model from GitHub raw URL
-@st.cache_data(show_spinner=False)
-def load_model_from_url(raw_url: str):
-    if not raw_url:
-        return None, "No URL provided"
-    try:
-        resp = requests.get(raw_url, timeout=10)
-        resp.raise_for_status()
-        model = joblib.load(BytesIO(resp.content))
-        return model, None
-    except Exception as e:
-        return None, str(e)
-
-# Display dataset image (if exists)
-try:
-    img = Image.open(DATASET_IMAGE_PATH)
-    st.sidebar.image(img, caption="Dataset preview", use_column_width=True)
-except Exception:
-    pass
-
-# Define expected features order for the model input.
-# IMPORTANT: Adjust this list if your model expects a different feature order or different names.
+# Feature order the model expects (must match training)
 FEATURE_ORDER = [
     "SMOKING",
     "YELLOW_FINGERS",
@@ -60,118 +35,130 @@ FEATURE_ORDER = [
     "SHORTNESS_OF_BREATH",
     "SWALLOWING_DIFFICULTY",
     "CHEST_PAIN",
-    "Anxiety + yellow fingers"  # derived column
+    "Anxiety + yellow fingers",
 ]
 
-st.write("Feature order used for prediction (ensure this matches the model's training order):")
-st.write(FEATURE_ORDER)
+st.caption("Ensure FEATURE_ORDER matches the model's training order and preprocessing.")
 
-# Build input UI depending on mode
-def boolean_input(label, key, default=0):
-    # Streamlit selectbox for 0/1 to be explicit
+# ---------- helpers ----------
+def binary_input(label, key, default=0):
     return int(st.number_input(label, min_value=0, max_value=1, value=default, step=1, key=key))
 
+def compute_derived(anx, yellow):
+    # Rule: logical OR -> 1 if either is 1. Change if your training used another rule.
+    return 1 if (anx == 1 or yellow == 1) else 0
+
+def load_local_model(path: Path):
+    if not path.exists():
+        return None, f"Model file not found at: {path.resolve()}"
+    try:
+        model = joblib.load(path)
+        return model, None
+    except Exception as e:
+        return None, str(e)
+
+def show_prediction_only_and_warning(model, x):
+    try:
+        pred = model.predict(x)
+        # extract scalar prediction
+        pred_value = float(pred[0]) if hasattr(pred, "__len__") else float(pred)
+        st.success(f"Predicted value (model output): **{pred_value}**")
+        st.warning("**Disclaimer:** Automated prediction may vary. This is not a medical diagnosis. Consult a qualified healthcare professional.")
+    except Exception as e:
+        st.error(f"Prediction failed: {e}")
+
+# ---------- Patient Mode ----------
 if mode == "Patient":
-    st.header("Patient mode — enter symptoms (cancer NOT requested as input)")
-    st.info("You provide symptoms below. The combined feature 'Anxiety + yellow fingers' is calculated automatically from ANXIETY and YELLOW_FINGERS.")
+    st.header("Patient mode — enter symptoms (LUNG_CANCER NOT provided as input)")
+    st.info("We compute the combined feature 'Anxiety + yellow fingers' automatically.")
+
     with st.form("patient_form"):
         inputs = {}
-        # Take inputs except cancer
-        inputs["SMOKING"] = boolean_input("SMOKING (0/1)", "p_smoking", 0)
-        inputs["YELLOW_FINGERS"] = boolean_input("YELLOW_FINGERS (0/1)", "p_yellow", 0)
-        inputs["ANXIETY"] = boolean_input("ANXIETY (0/1)", "p_anxiety", 0)
-        inputs["PEER_PRESSURE"] = boolean_input("PEER_PRESSURE (0/1)", "p_peer", 0)
-        inputs["CHRONIC_DISEASE"] = boolean_input("CHRONIC_DISEASE (0/1)", "p_chronic", 0)
-        inputs["FATIGUE"] = boolean_input("FATIGUE (0/1)", "p_fatigue", 0)
-        inputs["ALLERGY"] = boolean_input("ALLERGY (0/1)", "p_allergy", 0)
-        inputs["WHEEZING"] = boolean_input("WHEEZING (0/1)", "p_wheezing", 0)
-        inputs["ALCOHOL_CONSUMING"] = boolean_input("ALCOHOL_CONSUMING (0/1)", "p_alcohol", 0)
-        inputs["COUGHING"] = boolean_input("COUGHING (0/1)", "p_coughing", 0)
-        inputs["SHORTNESS_OF_BREATH"] = boolean_input("SHORTNESS_OF_BREATH (0/1)", "p_shortness", 0)
-        inputs["SWALLOWING_DIFFICULTY"] = boolean_input("SWALLOWING_DIFFICULTY (0/1)", "p_swallow", 0)
-        inputs["CHEST_PAIN"] = boolean_input("CHEST_PAIN (0/1)", "p_chest", 0)
+        inputs["SMOKING"] = binary_input("SMOKING (0/1)", "p_smoking", 0)
+        inputs["YELLOW_FINGERS"] = binary_input("YELLOW_FINGERS (0/1)", "p_yellow", 0)
+        inputs["ANXIETY"] = binary_input("ANXIETY (0/1)", "p_anxiety", 0)
+        inputs["PEER_PRESSURE"] = binary_input("PEER_PRESSURE (0/1)", "p_peer", 0)
+        inputs["CHRONIC_DISEASE"] = binary_input("CHRONIC_DISEASE (0/1)", "p_chronic", 0)
+        inputs["FATIGUE"] = binary_input("FATIGUE (0/1)", "p_fatigue", 0)
+        inputs["ALLERGY"] = binary_input("ALLERGY (0/1)", "p_allergy", 0)
+        inputs["WHEEZING"] = binary_input("WHEEZING (0/1)", "p_wheezing", 0)
+        inputs["ALCOHOL_CONSUMING"] = binary_input("ALCOHOL_CONSUMING (0/1)", "p_alcohol", 0)
+        inputs["COUGHING"] = binary_input("COUGHING (0/1)", "p_coughing", 0)
+        inputs["SHORTNESS_OF_BREATH"] = binary_input("SHORTNESS_OF_BREATH (0/1)", "p_shortness", 0)
+        inputs["SWALLOWING_DIFFICULTY"] = binary_input("SWALLOWING_DIFFICULTY (0/1)", "p_swallow", 0)
+        inputs["CHEST_PAIN"] = binary_input("CHEST_PAIN (0/1)", "p_chest", 0)
 
         submitted = st.form_submit_button("Predict (Patient)")
 
     if submitted:
-        # Compute derived feature: "Anxiety + yellow fingers"
-        # Current rule: logical OR => 1 if either anxiety or yellow_fingers is 1.
-        # If you want a different rule (sum or AND), change this line accordingly.
-        derived = 1 if (inputs["ANXIETY"] == 1 or inputs["YELLOW_FINGERS"] == 1) else 0
-        inputs["Anxiety + yellow fingers"] = derived
-
-        # Arrange features in FEATURE_ORDER
+        inputs["Anxiety + yellow fingers"] = compute_derived(inputs["ANXIETY"], inputs["YELLOW_FINGERS"])
         try:
             x = np.array([inputs[f] for f in FEATURE_ORDER], dtype=float).reshape(1, -1)
         except KeyError as e:
             st.error(f"Feature mismatch: missing {e}. Check FEATURE_ORDER vs provided inputs.")
             st.stop()
 
-        model, err = load_model_from_url(GITHUB_RAW_URL)
+        model, err = load_local_model(LOCAL_MODEL_PATH)
         if model is None:
             st.error(f"Model load failed: {err}")
         else:
+            show_prediction_only_and_warning(model, x)
+
+# ---------- Doctor Mode ----------
+else:
+    st.header("Doctor mode — CT scan / image analysis (not integrated)")
+    st.info("Doctor mode currently supports uploading a CT scan image for future analysis. Image analysis is not integrated yet; click 'Run Image Analysis' to get the file path for integration.")
+
+    # Allow doctor to upload their own CT scan (or use the dataset preview image)
+    uploaded_file = st.file_uploader("Upload CT scan image (DICOM/JPEG/PNG) for future analysis", type=["png", "jpg", "jpeg", "dcm"])
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if uploaded_file is not None:
+            st.success("Uploaded file received.")
+            # Save uploaded to a temp file and present the local path (so your tooling can transform it into a URL)
             try:
-                pred = model.predict(x)
-                # If model returns array, take first element
-                if hasattr(pred, "__len__"):
-                    pred_value = pred[0]
-                else:
-                    pred_value = pred
-                st.success(f"Predicted value (model output): **{pred_value}**")
+                suffix = Path(uploaded_file.name).suffix or ".img"
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+                tmp.write(uploaded_file.getbuffer())
+                tmp.flush()
+                tmp_path = tmp.name
+                tmp.close()
+                st.write("Temporary local file path (use this as file URL for integration):")
+                st.code(tmp_path)
+                # preview image if PIL-readable
+                try:
+                    im = Image.open(tmp_path)
+                    st.image(im, caption="Uploaded image preview")
+                except Exception:
+                    st.info("Uploaded file preview not available (maybe DICOM or unsupported for preview).")
             except Exception as e:
-                st.error(f"Prediction failed: {e}")
+                st.error(f"Failed to save uploaded file: {e}")
+        else:
+            st.info("No file uploaded. You may also use the dataset preview image (right).")
 
-elif mode == "Doctor":
-    st.header("Doctor mode — full inputs (you can also provide LUNG_CANCER value if desired)")
-    st.info("Doctor mode allows editing all features including the LUNG_CANCER column. Prediction still uses the model loaded from the GitHub .pkl.")
-    with st.form("doctor_form"):
-        d_inputs = {}
-        d_inputs["SMOKING"] = boolean_input("SMOKING (0/1)", "d_smoking", 0)
-        d_inputs["YELLOW_FINGERS"] = boolean_input("YELLOW_FINGERS (0/1)", "d_yellow", 0)
-        d_inputs["ANXIETY"] = boolean_input("ANXIETY (0/1)", "d_anxiety", 0)
-        d_inputs["PEER_PRESSURE"] = boolean_input("PEER_PRESSURE (0/1)", "d_peer", 0)
-        d_inputs["CHRONIC_DISEASE"] = boolean_input("CHRONIC_DISEASE (0/1)", "d_chronic", 0)
-        d_inputs["FATIGUE"] = boolean_input("FATIGUE (0/1)", "d_fatigue", 0)
-        d_inputs["ALLERGY"] = boolean_input("ALLERGY (0/1)", "d_allergy", 0)
-        d_inputs["WHEEZING"] = boolean_input("WHEEZING (0/1)", "d_wheezing", 0)
-        d_inputs["ALCOHOL_CONSUMING"] = boolean_input("ALCOHOL_CONSUMING (0/1)", "d_alcohol", 0)
-        d_inputs["COUGHING"] = boolean_input("COUGHING (0/1)", "d_coughing", 0)
-        d_inputs["SHORTNESS_OF_BREATH"] = boolean_input("SHORTNESS_OF_BREATH (0/1)", "d_shortness", 0)
-        d_inputs["SWALLOWING_DIFFICULTY"] = boolean_input("SWALLOWING_DIFFICULTY (0/1)", "d_swallow", 0)
-        d_inputs["CHEST_PAIN"] = boolean_input("CHEST_PAIN (0/1)", "d_chest", 0)
-
-        # This is the cancer column (doctor may input)
-        lung_cancer_input = st.selectbox("LUNG_CANCER (0/1) - only for record, model prediction is still independent",
-                                         options=[0, 1], index=0, key="d_cancer")
-
-        submit_doc = st.form_submit_button("Predict (Doctor)")
-
-    if submit_doc:
-        derived = 1 if (d_inputs["ANXIETY"] == 1 or d_inputs["YELLOW_FINGERS"] == 1) else 0
-        d_inputs["Anxiety + yellow fingers"] = derived
-
+    with col2:
+        st.subheader("Dataset preview image (developer-provided)")
         try:
-            xdoc = np.array([d_inputs[f] for f in FEATURE_ORDER], dtype=float).reshape(1, -1)
-        except KeyError as e:
-            st.error(f"Feature mismatch: missing {e}. Check FEATURE_ORDER vs provided inputs.")
-            st.stop()
+            img = Image.open(DATASET_IMAGE_LOCAL_PATH)
+            st.image(img, caption="Dataset preview")
+            st.write("Local dataset image path (use this as file URL for integration):")
+            st.code(DATASET_IMAGE_LOCAL_PATH)
+        except Exception:
+            st.warning("Dataset preview image not available at the expected path.")
 
-        model, err = load_model_from_url(GITHUB_RAW_URL)
-        if model is None:
-            st.error(f"Model load failed: {err}")
+    st.markdown("---")
+    if st.button("Run Image Analysis (Doctor)"):
+        # Show message that image analysis isn't integrated yet
+        st.info("Image analysis is not integrated yet.")
+        # If a user uploaded, show that temp path; otherwise show developer-provided dataset path
+        if uploaded_file is not None and 'tmp_path' in locals():
+            st.write("Use this local file path for integration (we will transform it into a URL in the tool call):")
+            st.code(tmp_path)
         else:
-            try:
-                pred = model.predict(xdoc)
-                if hasattr(pred, "__len__"):
-                    pred_value = pred[0]
-                else:
-                    pred_value = pred
-                st.success(f"Predicted value (model output): **{pred_value}**")
-                st.write("Note: You entered LUNG_CANCER value (doctor entry):", lung_cancer_input)
-            except Exception as e:
-                st.error(f"Prediction failed: {e}")
+            st.write("No CT upload detected. Use the developer-provided dataset image local path for integration:")
+            st.code(DATASET_IMAGE_LOCAL_PATH)
+        st.warning("Image analysis functionality will be added later. No model prediction is performed here.")
 
-# Footer notes
 st.markdown("---")
-st.caption("Notes: \n- Ensure the model's expected feature order and preprocessing match FEATURE_ORDER above. \n- If the model used scaling or other preprocessing at training time, apply identical preprocessing before prediction.")
+st.caption("Notes: \n- This app expects a local model file named 'lung_cancer_model.pkl' in the same directory as app.py. \n- FEATURE_ORDER must exactly match the feature order used when training the model. \n- If your training pipeline applied scaling/encoders, load and apply the same preprocessing objects before predicting.")
